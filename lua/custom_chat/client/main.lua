@@ -46,27 +46,23 @@ function CustomChat.NiceTime( time )
     local d = time % 7
     local w = Floor( time / 7 )
 
-    local parts = {}
-
     if w > 0 then
-        parts[#parts + 1] = w .. " " .. L( "time.weeks" )
+        return w .. " " .. L( "time.weeks" )
     end
 
     if d > 0 then
-        parts[#parts + 1] = d .. " " .. L( "time.days" )
+        return d .. " " .. L( "time.days" )
     end
 
     if h > 0 then
-        parts[#parts + 1] = Format( "%02i ", h ) .. L( "time.hours" )
+        return h .. " " .. L( "time.hours" )
     end
 
-    if m > 0 then
-        parts[#parts + 1] = Format( "%02i ", m ) .. L( "time.minutes" )
+    if m > 0 and h < 1 and d < 1 then
+        return m .. " " ..  L( "time.minutes" )
     end
 
-    parts[#parts + 1] = Format( "%02i ", s ) .. L( "time.seconds" )
-
-    return table.concat( parts, " " )
+    return s .. " " .. L( "time.seconds" )
 end
 
 function CustomChat.PrintMessage( text )
@@ -453,6 +449,7 @@ local function CustomChat_Open( pcalled )
     CustomChat.frame:SetKeyboardInputEnabled( true )
     CustomChat.frame:OpenChat()
 
+    CustomChat.isOpen = true
     CustomChat.SetTyping( true )
 
     -- Make sure the gamemode and other addons know we are chatting
@@ -465,6 +462,8 @@ local function CustomChat_Close()
     CustomChat.frame:CloseChat()
     CustomChat.frame:SetMouseInputEnabled( false )
     CustomChat.frame:SetKeyboardInputEnabled( false )
+
+    CustomChat.isOpen = false
     CustomChat.SetTyping( false )
 
     gui.EnableScreenClicker( false )
@@ -497,8 +496,9 @@ local function CustomChat_OnPlayerBindPress( _, bind, pressed )
     -- Don't open if playable piano is blocking input
     if IsValid( LocalPlayer().Instrument ) then return end
 
-    -- Don't open if Starfall is blocking input
+    -- Don't open if Wiremod or Starfall is blocking input
     local existingBindHooks = hook.GetTable()["PlayerBindPress"]
+    if existingBindHooks["wire_keyboard_blockinput"] then return end
     if existingBindHooks["sf_keyboard_blockinput"] then return end
 
     -- Don't open if anything else wants to block input
@@ -515,27 +515,29 @@ local function CustomChat_HUDShouldDraw( name )
     if name == "CHudChat" then return false end
 end
 
-local isGamePaused = false
-
 local function CustomChat_Think()
-    if not CustomChat.frame then return end
+    local frame = CustomChat.frame
+    if not frame then return end
 
-    -- Hide the chat box if the game is paused
     if gui.IsGameUIVisible() then
-        if isGamePaused == false then
-            isGamePaused = true
-
-            CustomChat.frame:SetVisible( false )
-
-            if CustomChat.frame.isChatOpen then
-                chat.Close()
-            end
+        if frame:IsVisible() then
+            -- Close and completely hide the chat
+            -- while the pause menu is visible
+            chat.Close()
+            frame:SetVisible( false )
         end
-    else
-        if isGamePaused == true then
-            isGamePaused = false
-            CustomChat.frame:SetVisible( true )
-        end
+
+    elseif not frame:IsVisible() then
+        -- Make the chat visible otherwise
+        frame:SetVisible( true )
+    end
+end
+
+local function CustomChat_OnPauseMenuShow()
+    if CustomChat.frame and CustomChat.isOpen then
+        chat.Close()
+
+        return false
     end
 end
 
@@ -548,6 +550,7 @@ function CustomChat:Enable()
     hook.Add( "PlayerBindPress", "CustomChat.OnPlayerBindPress", CustomChat_OnPlayerBindPress )
     hook.Add( "HUDShouldDraw", "CustomChat.HUDShouldDraw", CustomChat_HUDShouldDraw )
     hook.Add( "Think", "CustomChat.Think", CustomChat_Think )
+    hook.Add( "OnPauseMenuShow", "CustomChat.OnPauseMenuShow", CustomChat_OnPauseMenuShow )
 
     if IsValid( CustomChat.frame ) then
         CustomChat.frame:SetVisible( true )
@@ -567,6 +570,7 @@ function CustomChat:Disable()
     hook.Remove( "PlayerBindPress", "CustomChat.OnPlayerBindPress" )
     hook.Remove( "HUDShouldDraw", "CustomChat.HUDShouldDraw" )
     hook.Remove( "Think", "CustomChat.Think" )
+    hook.Remove( "OnPauseMenuShow", "CustomChat.OnPauseMenuShow" )
 
     chat.AddText = CustomChat.DefaultAddText
     chat.Close = CustomChat.DefaultClose
@@ -657,6 +661,8 @@ hook.Add( "NetPrefs_OnChange", "CustomChat.OnServerConfigChange", function( key,
         JoinLeave.leaveColor = data.connection.leaveColor
         JoinLeave.leavePrefix = data.connection.leavePrefix
         JoinLeave.leaveSuffix = data.connection.leaveSuffix
+
+        JoinLeave.botConnectDisconnect = data.connection.botConnectDisconnect
     end
 end )
 
