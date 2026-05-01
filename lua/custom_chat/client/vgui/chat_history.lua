@@ -176,6 +176,7 @@ img {
     display: inline-block;
     max-width: 95%;
     max-height: 120px;
+    vertical-align: text-top;
 }
 
 .b-text { font-weight: 800; }
@@ -342,6 +343,34 @@ img {
     -webkit-animation: wk_anim_rainbow 2s linear infinite;
     animation: ch_anim_rainbow 2s linear infinite;
 }
+
+.gradient-container {
+    position: relative;
+    color: blue;
+    text-shadow: 0px 0px 0.15em blue;
+}
+
+.gradient-fg {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    top: 0;
+    left: 0;
+    z-index: 10;
+
+    background-image: -webkit-linear-gradient(left, #ffffff, #ffffff);
+    text-shadow: none;
+    color: transparent;
+
+    -webkit-background-clip: text;
+    background-clip: text;
+    background-size: 100% 100%;
+}
+
+.media-player {
+	display: block;
+	width: 80%;
+}
 </style>
 
 <script>
@@ -437,6 +466,18 @@ function ScrollAllChannelsToBottom() {
     for (var k in channels) { ScrollToBottom(channels[k]); }
 }
 
+function RemoveMediaElementsFrom(parent) {
+    const children = parent.children;
+
+	for (var i = 0; i < children.length; i++) {
+		var child = children[i];
+
+		if (child.className == "media-player") {
+			parent.removeChild(child);
+		}
+	}
+}
+
 function AddMessage(message, chid, showAnimation, showTemporary) {
     var e = channels[chid];
     if (!e) return;
@@ -457,6 +498,7 @@ function AddMessage(message, chid, showAnimation, showTemporary) {
     if (!showTemporary) return;
 
     var copy = message.cloneNode(true);
+    RemoveMediaElementsFrom(copy);
     elTemp.appendChild(copy);
 
     if (elTemp.childElementCount > 10) {
@@ -513,7 +555,7 @@ window.addEventListener("keydown", function(ev) {
     }
 });
 
-console.log("Ready.");
+console.log("Ready, using Chromium: " + (IS_AWESOMIUM ? "No" : "Yes"));
 </script>
 </html>]]
 end

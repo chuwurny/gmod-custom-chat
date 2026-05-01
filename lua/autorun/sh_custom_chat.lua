@@ -64,19 +64,54 @@ CreateConVar( "custom_chat_max_lines", "6", bit.bor( FCVAR_ARCHIVE, FCVAR_REPLIC
 CreateConVar( "custom_chat_enable_absence_messages", "1", bit.bor( FCVAR_ARCHIVE, FCVAR_REPLICATED, FCVAR_NOTIFY ),
     "On first spawn, show messages about when a player was last present on the server.", 0, 1 )
 
+CreateConVar( "custom_chat_absence_mintime", "300", bit.bor( FCVAR_ARCHIVE, FCVAR_REPLICATED, FCVAR_NOTIFY ),
+    "Minimum time in seconds to show absence messages. Set to 0 to disable.", 0 )
+
 CreateConVar( "custom_chat_enable_friend_messages", "1", bit.bor( FCVAR_ARCHIVE, FCVAR_REPLICATED, FCVAR_NOTIFY ),
     "Show messages to players when their friends spawn on the server.", 0, 1 )
 
 CreateConVar( "custom_chat_enable_dms", "1", bit.bor( FCVAR_ARCHIVE, FCVAR_REPLICATED, FCVAR_NOTIFY ),
     "Allow players to chat with eachother privately.", 0, 1 )
 
+CreateConVar( "custom_chat_always_allow_embeds", "0", bit.bor( FCVAR_ARCHIVE, FCVAR_REPLICATED, FCVAR_NOTIFY ),
+    "Allows embeds to be displayed on the chat, even if the message did not come from a player.", 0, 1 )
+
+CreateConVar( "custom_chat_print_chats", "1", bit.bor( FCVAR_ARCHIVE, FCVAR_REPLICATED, FCVAR_NOTIFY ),
+    "Print chat messages to the server console.", 0, 1 )
+
+if CLIENT then
+    CreateClientConVar( "custom_chat_enable", "1", true, false )
+
+    CreateClientConVar( "custom_chat_show_steamid_on_join_leave", "0", true, false,
+        "Should the SteamID be visible when showing join/leave messages?", 0, 1 )
+end
+
+if SERVER then
+    CreateConVar( "custom_chat_server_log_method", "0", bit.bor( FCVAR_ARCHIVE, FCVAR_NOTIFY ),
+        "Set the logging method to be used server-side. 0 for MsgC only, 1 for MsgC & ServerLog, 2 for ServerLog only.", 0, 2 )
+end
+
 function CustomChat.Print( str, ... )
+    if SERVER then
+        local logMethod = CustomChat.GetConVarInt( "server_log_method", 0 )
+
+        if logMethod > 0 then
+            ServerLog( "[Custom Chat] " .. string.format( str, ... ) .. "\n" )
+            if logMethod == 2 then return end
+        end
+    end
+
     MsgC( Color( 0, 123, 255 ), "[Custom Chat] ", Color( 255, 255, 255 ), string.format( str, ... ), "\n" )
 end
 
 function CustomChat.GetConVarInt( name, default )
     local cvar = GetConVar( "custom_chat_" .. name )
     return cvar and cvar:GetInt() or default
+end
+
+function CustomChat.GetConVarBool( name )
+    local cvar = GetConVar( "custom_chat_" .. name )
+    return cvar and cvar:GetBool()
 end
 
 function CustomChat.ToJSON( tbl )

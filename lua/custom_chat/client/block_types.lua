@@ -4,6 +4,7 @@ local Find = string.find
 local Format = string.format
 local Substring = string.sub
 local SafeString = string.JavascriptSafe
+local Match = string.match
 
 local Append = CustomChat.AppendString
 local ColorToRGB = CustomChat.ColorToRGB
@@ -12,12 +13,14 @@ local IsStringValid = CustomChat.IsStringValid
 -- Force plain HTTP for certain image links when Chromium is not in use
 local forceHTTP
 
-if BRANCH == "unknown" then
+if system.IsLinux() and BRANCH ~= "x86-64" then
     CustomChat.Print( "Not using Chromium, enforcing plain HTTP for some image links." )
 
     forceHTTP = {
         ["avatars.cloudflare.steamstatic.com"] = true,
         ["avatars.akamai.steamstatic.com"] = true,
+        ["avatars.fastly.steamstatic.com"] = true,
+        ["shared.fastly.steamstatic.com"] = true,
         ["media.discordapp.net"] = true,
         ["cdn.discordapp.com"] = true -- seems like it still does not work
     }
@@ -224,6 +227,23 @@ function Create.Image( url, link, cssClass, altText, safeFilter )
     return table.concat( lines, "\n" )
 end
 
+--- Returns JS code to create a audio media element.
+function Create.Audio( url, ctx )
+    local lines = { Create.Text( url, ctx.font, url, Color( 50, 100, 255 ) ) }
+
+    url = SafeString( url )
+
+    Append( lines, Create.Element( "audio", "elAudio" ) )
+    Append( lines, "elAudio.className = 'media-player';" )
+    Append( lines, "elAudio.volume = 0.8;" )
+    Append( lines, "elAudio.setAttribute('preload', 'metadata');" )
+    Append( lines, "elAudio.setAttribute('controls', 'controls');" )
+    Append( lines, "elAudio.setAttribute('controlsList', 'nodownload noremoteplayback');" )
+    Append( lines, "elAudio.src = '%s';", url )
+
+    return table.concat( lines, "\n" )
+end
+
 -- Background color for code snippets
 local CODE_BG_COLOR = Color( 47, 49, 54, 255 )
 
@@ -279,6 +299,41 @@ function Create.Embed( url, panel )
     return table.concat( lines, "\n" )
 end
 
+--- Returns JS code that creates gradient text
+function Create.Gradient( text, font, colorA, colorB, elementName )
+    elementName = elementName or "elGradient"
+
+    -- Gradient container/glow
+    local lines = { Create.Element( "span", elementName ) }
+    Append( lines, "%s.className = 'gradient-container';", elementName )
+    Append( lines, "%s.textContent = '%s';", elementName, text )
+
+    -- Use the combined colors for the glow effect
+    local h, s, l = ColorToHSL( Color(
+        ( colorA.r + colorB.r ) * 0.5,
+        ( colorA.g + colorB.g ) * 0.5,
+        ( colorA.b + colorB.b ) * 0.5
+    ) )
+
+    local colorGlow = ColorToRGB( HSLToColor( h, s, l * 0.5 ) )
+
+    Append( lines, "%s.style.color = '%s';", elementName, colorGlow )
+    Append( lines, "%s.style.textShadow = '0px 0px 0.2em %s';", elementName, colorGlow )
+
+    -- Gradient foreground/text
+    Append( lines, Create.Element( "span", "elGradientText", elementName ) )
+    Append( lines, "elGradientText.className = 'gradient-fg';" )
+    Append( lines, "elGradientText.textContent = '%s';", text )
+    Append( lines, "elGradientText.style.backgroundImage = '-webkit-linear-gradient(left, %s, %s)';", ColorToRGB( colorA ), ColorToRGB( colorB ) )
+
+    if IsStringValid( font ) then
+        Append( lines, "%s.style.fontFamily = '%s';", elementName, font )
+        Append( lines, "elGradientText.style.fontFamily = '%s';", font )
+    end
+
+    return table.concat( lines, "\n" )
+end
+
 --[[
     Steam avatar fetcher
 ]]
@@ -289,13 +344,8 @@ local avatarCache = {}
 -- Avatar placeholder until we are done fetching the player's avatar
 local avatarPlaceholder = "asset://garrysmod/materials/icon16/user.png"
 
-local function ExtractAvatarFromXML( data )
-    local urlPattern = "<!%[CDATA%[(https://[%g%.]+/[%g]+%.jpg)%]%]>"
-    local _, _, url = Find( data, "<avatarMedium>" .. urlPattern .. "</avatarMedium>"  )
-
-    if not url then
-        _, _, url = Find( data, "<avatarIcon>" .. urlPattern .. "</avatarIcon>"  )
-    end
+local function ExtractAvatarFromHTML( data )
+    local url = Match( data, "<div class=\"playerAvatar.-<img srcset=\"(.-%..-)\"" )
 
     return url
 end
@@ -358,7 +408,7 @@ function CustomChat.FetchUserAvatarURL( id, panel )
     end
 
     HTTP( {
-        url = string.format( "https://steamcommunity.com/profiles/%s?xml=true", id ),
+        url = string.format( "https://steamcommunity.com/profiles/%s", id ),
         method = "GET",
 
         success = function( code, body )
@@ -370,7 +420,7 @@ function CustomChat.FetchUserAvatarURL( id, panel )
             -- Is the panel still available?
             if not IsValid( panel ) then return end
 
-            url = ExtractAvatarFromXML( body )
+            url = ExtractAvatarFromHTML( body )
 
             if url then
                 if forceHTTP then
@@ -390,7 +440,7 @@ function CustomChat.FetchUserAvatarURL( id, panel )
                     end
                 end )
             else
-                OnFail( "Missing avatar URL from the XML data" )
+                OnFail( "Missing avatar URL from the HTML data" )
             end
         end,
 
@@ -408,15 +458,24 @@ local blocks = CustomChat.blocks or {}
 
 CustomChat.blocks = blocks
 
--- Used to test if a URL probably points to a image
-local imageExtensions = { "png", "jpg", "jpeg", "gif", "webp", "svg" }
+-- Used to test if a URL probably points to an image
+local IMAGE_EXTENSIONS = { "png", "jpg", "jpeg", "gif", "webp", "svg" }
+
+-- Used to test if a URL probably points to an audio file
+local AUDIO_EXTENSIONS = { "mp3", "wav", "ogg", "flac" }
 
 local function GetURLType( url )
     local withoutQueryStrings = url:gsub( "%?[^/]+", "" ):lower()
 
-    for _, ext in ipairs( imageExtensions ) do
+    for _, ext in ipairs( IMAGE_EXTENSIONS ) do
         if withoutQueryStrings:EndsWith( ext ) then
             return "image"
+        end
+    end
+
+    for _, ext in ipairs( AUDIO_EXTENSIONS ) do
+        if withoutQueryStrings:EndsWith( ext ) then
+            return "audio"
         end
     end
 
@@ -430,14 +489,60 @@ blocks["string"] = function( value, ctx )
 end
 
 blocks["player"] = function( value, ctx )
-    local lines = {}
+    local colors = { ctx.color }
 
-    if not value.isBot and ctx.panel.displayAvatars then
-        lines[#lines + 1] = Create.Image( CustomChat.FetchUserAvatarURL( value.id64, ctx.panel ), nil, "avatar ply-" .. value.id64 )
+    -- Get the player name color(s)
+    if IsValid( value.ply ) then
+        if CustomChat.USE_TAGS then
+            local nameColor = CustomChat.Tags:GetNameColor( value.ply )
+            if nameColor then colors[1] = nameColor end
+
+        elseif value.ply.getChatTag then
+            -- aTags support
+            local _, _, nameColor = value.ply:getChatTag()
+            if nameColor then colors[1] = nameColor end
+        end
+
+        local colorA, colorB = hook.Run( "OverrideCustomChatPlayerColor", value.ply )
+
+        if IsColor( colorA ) then
+            colors[1] = colorA
+
+            if IsColor( colorB ) then
+                colors[2] = colorB
+            end
+        end
     end
 
-    lines[#lines + 1] = Create.Element( "span", "elPlayer" )
-    Append( lines, "elPlayer.textContent = '%s';", SafeString( value.name ) )
+    local lines = {}
+
+    -- Create avatar image
+    if not value.isBot and ctx.panel.displayAvatars then
+        lines[#lines + 1] = Create.Image( CustomChat.FetchUserAvatarURL( value.id64, ctx.panel ), nil, "avatar ply-" .. value.id64 )
+
+        if colors[1] then
+            Append( lines, "elImg.style['border-color'] = '%s';", ColorToRGB( colors[1] ) )
+        end
+    end
+
+    local name = SafeString( value.name )
+
+    if #colors > 1 then
+        -- If we have more than one color, create a gradient
+        lines[#lines + 1] = Create.Gradient( name, ctx.font, colors[1], colors[2], "elPlayer" )
+    else
+        -- Otherwise create a regular text element
+        lines[#lines + 1] = Create.Element( "span", "elPlayer" )
+        Append( lines, "elPlayer.textContent = '%s';", name )
+
+        if IsStringValid( ctx.font ) then
+            Append( lines, "elPlayer.style.fontFamily = '%s';", ctx.font )
+        end
+
+        if colors[1] then
+            Append( lines, "elPlayer.style.color = '%s';", ColorToRGB( colors[1] ) )
+        end
+    end
 
     if not value.isBot then
         Append( lines, "elPlayer._playerData = '%s';", util.TableToJSON( {
@@ -449,30 +554,18 @@ blocks["player"] = function( value, ctx )
         Append( lines, "elPlayer.clickableText = true;" )
     end
 
-    if IsStringValid( ctx.font ) then
-        Append( lines, "elPlayer.style.fontFamily = '%s';", ctx.font )
-    end
+    return table.concat( lines, "\n" )
+end
 
-    local color = ctx.color
+blocks["avatar_image"] = function( value, ctx )
+    if not ctx.panel.displayAvatars then return "" end
+    if not IsStringValid( value ) then return "" end
 
-    if IsValid( value.ply ) then
-        if CustomChat.USE_TAGS then
-            local nameColor = CustomChat.Tags:GetNameColor( value.ply )
-            if nameColor then color = nameColor end
+    local url = SafeString( value )
+    local lines = { Create.Image( url, nil, "avatar" ) }
 
-        elseif value.ply.getChatTag then
-            -- aTags support
-            local _, _, nameColor = value.ply:getChatTag()
-            if nameColor then color = nameColor end
-        end
-    end
-
-    if color then
-        Append( lines, "elPlayer.style.color = '%s';", ColorToRGB( color ) )
-
-        if ctx.panel.displayAvatars then
-            Append( lines, "elImg.style['border-color'] = '%s';", ColorToRGB( color ) )
-        end
+    if ctx.color then
+        Append( lines, "elImg.style['border-color'] = '%s';", ColorToRGB( ctx.color ) )
     end
 
     return table.concat( lines, "\n" )
@@ -500,21 +593,26 @@ blocks["model"] = function( value, ctx )
 end
 
 blocks["url"] = function( value, ctx )
-    local urlType = GetURLType( value )
-    local canEmbed = false
+    local dontEmbed = value:sub( 1, 1 ) == "<"
 
+    if dontEmbed then
+        value = ChopEnds( value, 2 )
+    end
+
+    local urlType = GetURLType( value )
+    local canEmbed = not dontEmbed and CustomChat.GetConVarInt( "always_allow_embeds", 0 ) > 0
     local lastMessage = CustomChat.lastReceivedMessage
 
-    if value:sub( 1, 8 ) == "asset://" then
-        canEmbed = true
-
-    elseif lastMessage and IsValid( lastMessage.speaker ) then
+    if not dontEmbed and lastMessage and IsValid( lastMessage.speaker ) then
         canEmbed = hook.Run( "CanEmbedCustomChat", lastMessage.speaker, value, urlType ) ~= false
     end
 
     if canEmbed and CustomChat.IsWhitelisted( value ) then
         if urlType == "image" then
             return Create.Image( value, value, nil, value, CustomChat.GetConVarInt( "safe_mode", 1 ) > 0 )
+
+        elseif urlType == "audio" then
+            return Create.Audio( value, ctx )
         else
             return Create.Embed( value, ctx.panel )
         end
@@ -577,4 +675,21 @@ blocks["advert"] = function( value, ctx )
     Append( lines, "elText.style.color = '%s';", ColorToRGB( ctx.color ) )
 
     return table.concat( lines, "\n" )
+end
+
+local function ParseComponent( str )
+    return math.Clamp( tonumber( str ) or 0, 0, 255 )
+end
+
+blocks["gradient"] = function( value, ctx )
+    local components = ChopEnds( string.match( value, "%$%d+,%d+,%d+%,%d+,%d+,%d+%$" ), 2 )
+    local text = ChopEnds( string.match( value, "%([^%c]+%)" ), 2 )
+
+    components = string.Explode( ",", components, false )
+    text = SafeString( text )
+
+    local colorA = Color( ParseComponent( components[1] ), ParseComponent( components[2] ), ParseComponent( components[3] ) )
+    local colorB = Color( ParseComponent( components[4] ), ParseComponent( components[5] ), ParseComponent( components[6] ) )
+
+    return Create.Gradient( text, ctx.font, colorA, colorB )
 end

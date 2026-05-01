@@ -1,5 +1,3 @@
-CreateClientConVar( "custom_chat_enable", "1", true, false )
-
 -- Keep track of the original chat functions
 CustomChat.DefaultOpen = CustomChat.DefaultOpen or chat.Open
 CustomChat.DefaultClose = CustomChat.DefaultClose or chat.Close
@@ -32,37 +30,56 @@ function CustomChat.GetLanguageText( id )
     return language.GetPhrase( "custom_chat." .. id )
 end
 
-function CustomChat.NiceTime( time )
-    local L = CustomChat.GetLanguageText
-    local s = time % 60
+do
+    local year = 60 * 60 * 24 * 365
+    local month = 60 * 60 * 24 * 30
+    local day = 60 * 60 * 24
+    local hour = 60 * 60
+    local minute = 60
 
-    time = Floor( time / 60 )
-    local m = time % 60
+    function CustomChat.NiceTime( time )
+        local L = CustomChat.GetLanguageText
 
-    time = Floor( time / 60 )
-    local h = time % 24
+        local timeUnits = {
+            { value = Floor( time / year ), name = "time.years" },
+            { value = Floor( time / month ) % 12, name = "time.months" },
+            { value = Floor( time / day ) % 30, name = "time.days" },
+            { value = Floor( time / hour ) % 24, name = "time.hours" },
+            { value = Floor( time / minute ) % 60, name = "time.minutes" },
+            { value = time % 60, name = "time.seconds" }
+        }
 
-    time = Floor( time / 24 )
-    local d = time % 7
-    local w = Floor( time / 7 )
+        local nonZeroUnits = {}
 
-    if w > 0 then
-        return w .. " " .. L( "time.weeks" )
+        for _, unit in ipairs( timeUnits ) do
+            if unit.value > 0 then
+                table.insert( nonZeroUnits, unit )
+            end
+        end
+
+        local selectedUnits = {}
+        local unitsToShow = 1
+
+        if time > month then
+            unitsToShow = 2
+        end
+
+        for i = 1, math.min( unitsToShow, #nonZeroUnits ) do
+            table.insert( selectedUnits, nonZeroUnits[i] )
+        end
+
+        if #selectedUnits == 0 then
+            return "0 " .. L( "time.seconds" )
+        end
+
+        local parts = {}
+
+        for _, unit in ipairs( selectedUnits ) do
+            table.insert( parts, unit.value .. " " .. L( unit.name ) )
+        end
+
+        return table.concat( parts, ", " )
     end
-
-    if d > 0 then
-        return d .. " " .. L( "time.days" )
-    end
-
-    if h > 0 then
-        return h .. " " .. L( "time.hours" )
-    end
-
-    if m > 0 and h < 1 and d < 1 then
-        return m .. " " ..  L( "time.minutes" )
-    end
-
-    return s .. " " .. L( "time.seconds" )
 end
 
 function CustomChat.PrintMessage( text )
@@ -473,12 +490,14 @@ local function CustomChat_Close()
 end
 
 local function CustomChat_OnChatText( _, _, text, textType )
-    if textType == "chat" then return end
-
     local canShowJoinLeave = not ( CustomChat.JoinLeave.showConnect or CustomChat.JoinLeave.showDisconnect )
     if not canShowJoinLeave and textType == "joinleave" then return end
 
     CustomChat:AddMessage( { Color( 0, 128, 255 ), text } )
+
+    if textType ~= "chat" then
+        MsgC( Color( 0, 128, 255 ), text, "\n" )
+    end
 
     return true
 end
@@ -680,4 +699,29 @@ net.Receive( "customchat.say", function()
     hook.Run( "OnPlayerChat", speaker, message.text, message.channel == "team", not speaker:Alive() )
 
     CustomChat.lastReceivedMessage = nil
+end )
+
+hook.Add( "InitPostEntity", "CustomChat.PostInit", function()
+    if not aTags then
+        CustomChat.USE_TAGS = true
+    end
+
+    hook.Add( "OnPlayerChat", "CustomChat.PreprocessPlayerChat", function( ply, text, isTeam, isDead )
+        if CustomChat.USE_TAGS then
+            -- Make sure the `lastReceivedMessage` table exists when this hook runs.
+            -- It could be nil if the message comes from the "say" console command
+            -- instead of the "customchat.say" network event.
+            CustomChat.lastReceivedMessage = CustomChat.lastReceivedMessage or {
+                speaker = ply,
+                text = text,
+                channel = "global"
+            }
+
+            local ret = CustomChat.Tags:AddMessageWithCustomTags( ply, text, isTeam, isDead )
+            if ret ~= nil then
+                CustomChat.lastReceivedMessage = nil
+                return ret
+            end
+        end
+    end, HOOK_LOW )
 end )

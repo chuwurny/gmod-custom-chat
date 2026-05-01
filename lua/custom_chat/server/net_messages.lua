@@ -49,13 +49,19 @@ net.Receive( "customchat.say", function( _, speaker )
     if util.SteamIDTo64( channel ) ~= "0" then
         dmTarget = player.GetBySteamID( channel )
         if not IsValid( dmTarget ) then return end
-        if CustomChat.GetConVarInt( "enable_dms", 1 ) == 0 then return end
+        if not CustomChat.GetConVarBool( "enable_dms" ) then return end
     end
 
     text = CustomChat.CleanupString( text )
     text = hook.Run( "PlayerSay", speaker, text, teamOnly, channel )
 
     if not IsStringValid( text ) then return end
+
+    hook.Run( "PostPlayerSay", speaker, text, teamOnly, channel, dmTarget )
+
+    if CustomChat.GetConVarBool( "print_chats" ) then
+        CustomChat.Print( "%s [%s] {%s}: %s", speaker:Nick(), speaker:SteamID(), channel, text )
+    end
 
     if dmTarget then
         -- Send to the DM target

@@ -28,6 +28,9 @@ hook.Add( "player_connect_client", "CustomChat.ShowConnectMessages", function( d
 
     if isBot and not JoinLeave.botConnectDisconnect then return end
 
+    local hideMessage = hook.Run( "CustomChatHideJoinMessage", data )
+    if hideMessage == true then return end
+
     -- Only use a player block if Custom Chat is enabled
     if CustomChat.IsEnabled() then
         name = {
@@ -41,12 +44,18 @@ hook.Add( "player_connect_client", "CustomChat.ShowConnectMessages", function( d
         }
     end
 
-    chat.AddText(
+    local parts = {
         Color( 255, 255, 255 ), JoinLeave.joinPrefix,
-        Color( c[1], c[2], c[3] ), name,
-        Color( 150, 150, 150 ), " <" .. steamId .. "> ",
+        Color( c[1], c[2], c[3] ), name, " ",
         Color( 255, 255, 255 ), JoinLeave.joinSuffix
-    )
+    }
+
+    if CustomChat.GetConVarInt( "show_steamid_on_join_leave", 0 ) > 0 then
+        table.insert( parts, 5, Color( 150, 150, 150 ) )
+        table.insert( parts, 5, " <" .. steamId .. ">" )
+    end
+
+    chat.AddText( unpack( parts ) )
 end, HOOK_LOW )
 
 hook.Add( "player_disconnect", "CustomChat.ShowDisconnectMessages", function( data )
@@ -59,6 +68,9 @@ hook.Add( "player_disconnect", "CustomChat.ShowDisconnectMessages", function( da
 
     if isBot and not JoinLeave.botConnectDisconnect then return end
 
+    local hideMessage = hook.Run( "CustomChatHideLeaveMessage", data )
+    if hideMessage == true then return end
+
     -- Only use a player block if Custom Chat is enabled
     if CustomChat.IsEnabled() then
         name = {
@@ -72,13 +84,19 @@ hook.Add( "player_disconnect", "CustomChat.ShowDisconnectMessages", function( da
         }
     end
 
-    chat.AddText(
+    local parts = {
         Color( 255, 255, 255 ), JoinLeave.leavePrefix,
-        Color( c[1], c[2], c[3] ), name,
-        Color( 150, 150, 150 ), " <" .. steamId .. "> ",
+        Color( c[1], c[2], c[3] ), name, " ",
         Color( 255, 255, 255 ), JoinLeave.leaveSuffix,
         Color( 150, 150, 150 ), " (" .. data.reason .. ")"
-    )
+    }
+
+    if CustomChat.GetConVarInt( "show_steamid_on_join_leave", 0 ) > 0 then
+        table.insert( parts, 5, Color( 150, 150, 150 ) )
+        table.insert( parts, 5, " <" .. steamId .. ">" )
+    end
+
+    chat.AddText( unpack( parts ) )
 end, HOOK_LOW )
 
 local function OnPlayerActivated( ply, steamId, name, color, absenceLength )
@@ -110,8 +128,20 @@ local function OnPlayerActivated( ply, steamId, name, color, absenceLength )
         )
     end
 
-    if absenceLength < 1 then return end
-    if CustomChat.GetConVarInt( "enable_absence_messages", 0 ) == 0 then return end
+    if not CustomChat.GetConVarBool( "enable_absence_messages", false ) then return end
+    local hideAbsenceMessage = hook.Run( "CustomChatHideAbsenceMessage", ply, absenceLength )
+    if hideAbsenceMessage == true then return end
+
+    if absenceLength < 1 then
+        chat.AddText(
+            color, name,
+            Color( 150, 150, 150 ), " " .. CustomChat.GetLanguageText( "first_seen" )
+        )
+        return
+    end
+
+    local minTime = CustomChat.GetConVarInt( "absence_mintime", 0 )
+    if minTime > 0 and absenceLength < minTime then return end
 
     -- Show the last time the server saw this player
     local lastSeenTime = CustomChat.NiceTime( math.Round( absenceLength ) )
@@ -124,23 +154,33 @@ local function OnPlayerActivated( ply, steamId, name, color, absenceLength )
     )
 end
 
+CustomChat.PlayerInitialSpawnWaiting = CustomChat.PlayerInitialSpawnWaiting or {}
+hook.Add( "NetworkEntityCreated", "CustomChat.HandlePlayerInitialSpawn", function( ent )
+    if not ent:IsPlayer() then return end
+
+    local steamId = ent:SteamID()
+    local data = CustomChat.PlayerInitialSpawnWaiting[steamId]
+    if not data then return end
+
+    CustomChat.PlayerInitialSpawnWaiting[steamId] = nil
+    OnPlayerActivated( ent, steamId, data.name, data.color, data.absenceLength )
+end )
+
 net.Receive( "customchat.player_spawned", function()
     local steamId = net.ReadString()
     local name = net.ReadString()
     local color = net.ReadColor( false )
     local absenceLength = net.ReadFloat()
 
-    -- Wait until the player entity is valid, within a few tries
-    local timerId = "CustomChat.WaitValid" .. steamId
+    local ply = player.GetBySteamID( steamId )
+    if IsValid( ply ) then
+        OnPlayerActivated( ply, steamId, name, color, absenceLength )
+        return
+    end
 
-    -- Try every 1/2 seconds, 20 times, for a total of 10 seconds
-    timer.Create( timerId, 0.5, 20, function()
-        local ply = player.GetBySteamID( steamId )
-
-        if IsValid( ply ) then
-            timer.Remove( timerId )
-            OnPlayerActivated( ply, steamId, name, color, absenceLength )
-        end
-    end )
+    CustomChat.PlayerInitialSpawnWaiting[steamId] = {
+        name = name,
+        color = color,
+        absenceLength = absenceLength
+    }
 end )
-
